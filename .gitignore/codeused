@@ -1,0 +1,185 @@
+//In Terminal in VM
+start-yarn.sh
+start-dfs.sh
+jps
+
+//Going into MySQL 
+mysql –uroot -p
+
+//within MySQL
+CREATE DATABASE Project;
+
+USE Poject;
+
+CREATE TABLE project (rowid INTEGER PRIMARY KEY, country_code VARCHAR(254), country_name VARCHAR (254), year INTEGER, sex VARCHAR(254), population_age_18 INTEGER,  population_age_19 INTEGER, population_age_20 INTEGER, population_age_30 INTEGER, population_age_40 INTEGER, population_age_50 INTEGER, population_age_60 INTEGER, population_age_70 INTEGER, population_age_80 INTEGER, population INTEGER);
+
+SHOW tables; 
+
+LOAD DATA LOCAL INFILE '/home/hduser/Documents/projdata.csv' INTO TABLE project FIELDS TERMINATED BY',' LINES TERMINATED BY '\n'; 
+
+SELECT * FROM project LIMIT 10
+
+//exit MySQL session    
+____________________________________________________________________________________
+//Hbase
+cd usr/local/hbase/conf
+gedit hbase-env.sh
+
+//within gedit changed the file to include the below:
+export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+export LD_LIBRARY_PATH=/usr/local/hadoop/lib/native
+
+//exit the gedit
+cd /usr/local/hbase
+bin/start-hbase.sh
+
+//To make sure Hbase is starting - run 'jps' and ensure 'HMaster' appears
+jps
+bin/hbase shell
+
+//With HBase shell - need to create hbase table
+create 'hbaseproject', 'colfam1'
+
+//exit hbase
+___________________________________________________________________________________
+//Sqoop - the mysql connector file has already been copoed to the library filder within sthe sqoop directory
+cd /usr/local/sqoop/lib
+gedit mapred-site.xml
+
+//Include the below in the mapred-site.xml file and saved it:
+<property>
+<name>mapreduce.framwork.name</name>
+<value>yarn</value>
+</property>
+
+//Save the above and went back to the terminal and into the same directory
+gedit yarn-site.xml
+<property>
+<name>yarn.nodemanager.aux-services</name>
+<value>mapreduce_shuffle</value>
+</property>
+<property>
+<name>yarn.nodemanager.aux-services.mapreduce_shuffle</name>
+<value>org.apache.hadoop.mapred.ShuffleHandler</value>
+</property>
+
+//once above is saved, go back to terminal and into the same directory i.e. /usr/local/sqoop
+bin/sqoop import --connect jdbc:mysql://127.0.1.1/project --username root --table project --password Hadoop2015
+
+//to view table is in HDFS, go back to home directory
+hdfs dfs -ls /user/hduser/home/hduser/hiveproject
+____________________________________________________________________________________
+//Launch Eclipse
+//Create Project 'hbaseproject'
+
+//Create Driver, input and save the below code
+package hbaseproject;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.util.GenericOptionsParser;
+
+public class hbasedriver {
+    public static void main(String[] args) throws Exception {
+        Configuration conf = HBaseConfiguration.create();
+        String[] otherArgs = new GenericOptionsParser(conf, args).getRemainingArgs();
+        
+       Scan scan = new Scan();
+        Job job = Job.getInstance(conf, "Count frequency of country in projecttable.");
+        job.setJarByClass(hbasedriver.class);
+        TableMapReduceUtil.initTableMapperJob("hbaseproject", scan, hbasemapper.class, Text.class, IntWritable.class, job);
+        job.setReducerClass(hbasereducer.class);
+        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputValueClass(IntWritable.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(IntWritable.class);
+        FileOutputFormat.setOutputPath(job, new Path("hdfs://localhost:54310/user/hduser/hbaseproject"));
+        System.exit(job.waitForCompletion(true) ? 0 : 1);
+        }
+}
+
+//Create Mapper, input and save the below code
+package hbaseproject;
+import java.io.IOException;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+import org.apache.hadoop.hbase.mapreduce.TableMapper;
+import org.apache.hadoop.io.*;
+
+public class hbasemapper extends
+      TableMapper<Text, IntWritable> {
+    
+   private Text outChar= new Text();
+    private IntWritable ONE = new IntWritable(1);
+    
+   public void map(ImmutableBytesWritable row, Result columns, Context context)
+           throws IOException, InterruptedException {
+        
+       String test = new String(columns.getValue("hbaseproject".getBytes(), "country_name".getBytes()));
+        outtest.set(test);
+        context.write(outtest, ONE);
+    }
+
+}
+
+//create Reducer, input and save the below code
+package hbasproject;
+import java.io.IOException;
+import org.apache.hadoop.io.*;
+import org.apache.hadoop.mapreduce.Reducer;;
+
+public class hbasereducer extends
+      Reducer<Text, IntWritable, Text, IntWritable>{
+    
+   private IntWritable result = new IntWritable();
+    
+   public void reduce(Text key, Iterable<IntWritable> values, Context context)
+           throws IOException, InterruptedException {
+        
+       int sum = 0;
+        
+       for (IntWritable val : values) {
+            sum += val.get();
+        }
+        
+       result.set(sum);
+        
+       context.write(key, result);
+    }
+    
+
+}
+ 
+___________________________________________________________________________________
+//MapReduce using Hive
+//Back in the terminal, launch hive
+hive
+
+//to run the first query in hive
+INSERT OVERWRITE DIRECTORY 'user/hduser/home/hduser/hiveproject2' select country_name, sum(population) from project group by country_name;
+
+//to look at file in hdfs go into a terminal and into the home directory
+ hdfs dfs -ls user/hduser/home/hduser/hiveproject2
+
+//you will see an output in the form '000000_0'
+//to copy output to local drive
+hdfs dfs -copyToLocal user/hduser/home/hduser/hiveproject2/000000_0 /home/hduser/Documents/hiveproject
+
+// to run the second query go back into Hive
+INSERT OVERWRITE DIRECTORY 'user/hduser/home/hduser/hiveproject3' select year, country_name, count (distinct year) distinct_year, sum(population) from project group by year, country_name;
+
+//to look at file in hdfs go into a terminal and into the home directory
+ hdfs dfs -ls user/hduser/home/hduser/hiveproject3
+
+//will see an output in the form '000000_0'
+//to copy output to local drive
+hdfs dfs -copyToLocal user/hduser/home/hduser/hiveproject3/000000_0 
+/home/hduser/Documents/hiveproject
+
+//end of code - all outputs wil be saved on local drive
